@@ -50,7 +50,7 @@ function createOralHistoryPart1Quiz() {
   // --- Build form with FormApp ----------------------------------------------
   var form = FormApp.create(FORM_TITLE);
   form.setDescription(FORM_DESC);
-  form.setIsQuiz(true); // points set via REST below
+  form.setIsQuiz(true);
 
   form.addSectionHeaderItem().setTitle(INFO_TITLE);
   form.addTextItem().setTitle('First Name').setRequired(true);
@@ -63,25 +63,23 @@ function createOralHistoryPart1Quiz() {
     .setHelpText('Use formal written Vietnamese. Graded manually.').setRequired(true);
 
   form.addPageBreakItem().setTitle(PART2_TITLE).setHelpText(PART2_DESC);
-  var part2ItemsMeta = [];
   for (var i = 0; i < PART2_PROMPTS.length; i++) {
     var prompt = PART2_PROMPTS[i];
     var item = form.addTextItem()
       .setTitle('Part 2 Sentence #' + (i + 1))
       .setHelpText(prompt)
       .setRequired(true);
-    part2ItemsMeta.push({ title: 'Part 2 Sentence #' + (i + 1) });
+    item.setPoints(ONE_POINT);
   }
 
   form.addPageBreakItem().setTitle(PART3_TITLE).setHelpText(PART3_DESC);
-  var part3ItemsMeta = [];
   for (var j = 0; j < PART3_PROMPTS.length; j++) {
     var prompt3 = PART3_PROMPTS[j];
     var item3 = form.addTextItem()
       .setTitle('Part 3 Sentence #' + (j + 1))
       .setHelpText(prompt3)
       .setRequired(true);
-    part3ItemsMeta.push({ title: 'Part 3 Sentence #' + (j + 1) });
+    item3.setPoints(ONE_POINT);
   }
 
   var ss = SpreadsheetApp.create(FORM_TITLE + ' (Responses)');
@@ -89,219 +87,9 @@ function createOralHistoryPart1Quiz() {
 
   Utilities.sleep(1500);
 
-  var expectedTitles = [];
-  for (var p2 = 0; p2 < part2ItemsMeta.length; p2++) {
-    expectedTitles.push(part2ItemsMeta[p2].title);
-  }
-  for (var p3 = 0; p3 < part3ItemsMeta.length; p3++) {
-    expectedTitles.push(part3ItemsMeta[p3].title);
-  }
-  expectedTitles.push('Formal Letter (1-2 paragraphs)');
-
-  var apiItems = waitForFormItems_(form.getId(), expectedTitles);
-  var indexMap = buildItemLocationMap_(apiItems);
-  var questionLookup = buildQuestionLookup_(apiItems);
-
-  var updates = [];
-
-  updates.push({
-    updateSettings: {
-      settings: { quizSettings: { isQuiz: true } },
-      updateMask: 'quizSettings.isQuiz'
-    }
-  });
-
-  for (var a = 0; a < part2ItemsMeta.length; a++) {
-    var questionItem2 = takeQuestionItem_(questionLookup, part2ItemsMeta[a].title);
-    if (!questionItem2) {
-      throw new Error('Could not find Part 2 item "' + part2ItemsMeta[a].title + '" via API lookup.');
-    }
-    var qId2 = questionItem2.itemId;
-    var loc2 = indexMap[qId2];
-    if (!loc2) {
-      throw new Error('Could not find location for Part 2 item ' + qId2);
-    }
-    updates.push(updateItemTextGradingWithLocation_(qId2, { index: loc2.index }, ONE_POINT, [], 'Graded manually.'));
-  }
-
-  for (var b = 0; b < part3ItemsMeta.length; b++) {
-    var questionItem3 = takeQuestionItem_(questionLookup, part3ItemsMeta[b].title);
-    if (!questionItem3) {
-      throw new Error('Could not find Part 3 item "' + part3ItemsMeta[b].title + '" via API lookup.');
-    }
-    var qId3 = questionItem3.itemId;
-    var loc3 = indexMap[qId3];
-    if (!loc3) {
-      throw new Error('Could not find location for Part 3 item ' + qId3);
-    }
-    updates.push(updateItemTextGradingWithLocation_(qId3, { index: loc3.index }, ONE_POINT, [], 'Graded manually.'));
-  }
-
-  var essayItem = takeQuestionItem_(questionLookup, 'Formal Letter (1-2 paragraphs)');
-  if (!essayItem) {
-    throw new Error('Could not find Part 1 essay item via API lookup.');
-  }
-  var essayId = essayItem.itemId;
-  var essayLoc = indexMap[essayId];
-  if (!essayLoc) {
-    throw new Error('Could not find location for essay item ' + essayId + '.');
-  }
-  updates.push({
-    updateItem: {
-      location: { index: essayLoc.index },
-      item: {
-        itemId: essayId,
-        questionItem: {
-          question: {
-            grading: { pointValue: 20, generalFeedback: { text: 'Graded with rubric offline.' } }
-          }
-        }
-      },
-      updateMask: 'questionItem.question.grading'
-    }
-  });
-
-  batchUpdateFormRaw_(form.getId(), updates);
+  essay.setPoints(20);
 
   Logger.log('Edit URL: ' + form.getEditUrl());
   Logger.log('Live URL: ' + form.getPublishedUrl());
   Logger.log('Responses sheet: ' + ss.getUrl());
-}
-
-// Helper functions -----------------------------------------------------------
-
-function waitForFormItems_(formId, expectedTitles) {
-  var attempts = 0;
-  var maxAttempts = 6;
-  expectedTitles = expectedTitles || [];
-
-  while (attempts < maxAttempts) {
-    var items = fetchFormItems_(formId);
-    var missing = findMissingTitles_(items, expectedTitles);
-    if (missing.length === 0) {
-      return items;
-    }
-    Utilities.sleep(500 * (attempts + 1));
-    attempts++;
-  }
-
-  throw new Error('Could not find expected items after waiting: ' + expectedTitles.join(', '));
-}
-
-function fetchFormItems_(formId) {
-  var url = 'https://forms.googleapis.com/v1/forms/' + formId + '?fields=items(itemId,title,questionItem,pageBreakItem)';
-  var token = ScriptApp.getOAuthToken();
-  var res = UrlFetchApp.fetch(url, {
-    method: 'get',
-    headers: { Authorization: 'Bearer ' + token },
-    muteHttpExceptions: true
-  });
-  var code = res.getResponseCode();
-  if (code >= 300) {
-    throw new Error('Failed to fetch form structure (' + code + '): ' + res.getContentText());
-  }
-  var data = JSON.parse(res.getContentText());
-  return data.items || [];
-}
-
-function findMissingTitles_(items, expectedTitles) {
-  if (!expectedTitles || expectedTitles.length === 0) {
-    return [];
-  }
-  var titlesFound = {};
-  for (var i = 0; i < items.length; i++) {
-    var item = items[i];
-    if (!item || !item.questionItem) {
-      continue;
-    }
-    var title = item.title || (item.questionItem.question && item.questionItem.question.title);
-    if (title) {
-      titlesFound[title] = true;
-    }
-  }
-  var missing = [];
-  for (var j = 0; j < expectedTitles.length; j++) {
-    var expected = expectedTitles[j];
-    if (!titlesFound[expected]) {
-      missing.push(expected);
-    }
-  }
-  return missing;
-}
-
-function buildItemLocationMap_(items) {
-  var map = {};
-  for (var i = 0; i < items.length; i++) {
-    var item = items[i];
-    if (item && item.itemId) {
-      map[item.itemId] = { index: i };
-    }
-  }
-  return map;
-}
-
-function buildQuestionLookup_(items) {
-  var lookup = {};
-  for (var i = 0; i < items.length; i++) {
-    var item = items[i];
-    if (!item || !item.itemId || !item.questionItem) {
-      continue;
-    }
-    var title = item.title || (item.questionItem.question && item.questionItem.question.title);
-    if (!title) {
-      continue;
-    }
-    if (!lookup[title]) {
-      lookup[title] = [];
-    }
-    lookup[title].push(item);
-  }
-  return lookup;
-}
-
-function takeQuestionItem_(lookup, title) {
-  if (!lookup || !lookup[title] || lookup[title].length === 0) {
-    return null;
-  }
-  return lookup[title].shift();
-}
-
-function updateItemTextGradingWithLocation_(itemId, locationObj, points, correctAnswersArrayOrNull, feedbackText) {
-  var grading = { pointValue: points };
-  if (correctAnswersArrayOrNull && correctAnswersArrayOrNull.length > 0) {
-    grading.correctAnswers = { answers: correctAnswersArrayOrNull };
-  }
-  if (feedbackText) {
-    grading.generalFeedback = { text: feedbackText };
-  }
-  return {
-    updateItem: {
-      location: locationObj,
-      item: {
-        itemId: itemId,
-        questionItem: {
-          question: {
-            grading: grading
-          }
-        }
-      },
-      updateMask: 'questionItem.question.grading'
-    }
-  };
-}
-
-function batchUpdateFormRaw_(formId, requests) {
-  var url = 'https://forms.googleapis.com/v1/forms/' + formId + ':batchUpdate';
-  var token = ScriptApp.getOAuthToken();
-  var res = UrlFetchApp.fetch(url, {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify({ includeFormInResponse: false, requests: requests }),
-    headers: { Authorization: 'Bearer ' + token },
-    muteHttpExceptions: true
-  });
-  var code = res.getResponseCode();
-  if (code >= 300) {
-    throw new Error('Forms API error ' + code + ': ' + res.getContentText());
-  }
 }
